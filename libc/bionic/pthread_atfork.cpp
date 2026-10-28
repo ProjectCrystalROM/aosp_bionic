@@ -28,6 +28,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 struct atfork_t {
   atfork_t* next;
@@ -36,6 +37,7 @@ struct atfork_t {
   void (*prepare)(void);
   void (*child)(void);
   void (*parent)(void);
+  void* dso_handle;
 };
 
 struct atfork_list_t {
@@ -85,7 +87,8 @@ void __bionic_atfork_run_parent() {
   pthread_mutex_unlock(&g_atfork_list_mutex);
 }
 
-int pthread_atfork(void (*prepare)(void), void (*parent)(void), void(*child)(void)) {
+extern "C" int __register_atfork(void (*prepare)(void), void (*parent)(void),
+                                 void(*child)(void), void* dso) {
   atfork_t* entry = reinterpret_cast<atfork_t*>(malloc(sizeof(atfork_t)));
   if (entry == NULL) {
     return ENOMEM;
@@ -94,6 +97,7 @@ int pthread_atfork(void (*prepare)(void), void (*parent)(void), void(*child)(voi
   entry->prepare = prepare;
   entry->parent = parent;
   entry->child = child;
+  entry->dso_handle = dso;
 
   pthread_mutex_lock(&g_atfork_list_mutex);
 
@@ -111,4 +115,28 @@ int pthread_atfork(void (*prepare)(void), void (*parent)(void), void(*child)(voi
   pthread_mutex_unlock(&g_atfork_list_mutex);
 
   return 0;
+}
+
+// Preserve the legacy public API; registrations without a DSO keep their
+// original process-lifetime behavior.
+int pthread_atfork(void (*prepare)(void), void (*parent)(void), void(*child)(void)) {
+  return __register_atfork(prepare, parent, child, NULL);
+}
+
+// Called after that DSO's destructors have finished, before it is unmapped.
+extern "C" __LIBC_HIDDEN__ void __unregister_atfork(void* dso) {
+  pthread_mutex_lock(&g_atfork_list_mutex);
+  atfork_t* it = g_atfork_list.first;
+  while (it != NULL) {
+    atfork_t* next = it->next;
+    if (it->dso_handle == dso) {
+      if (it->prev != NULL) it->prev->next = it->next;
+      else g_atfork_list.first = it->next;
+      if (it->next != NULL) it->next->prev = it->prev;
+      else g_atfork_list.last = it->prev;
+      free(it);
+    }
+    it = next;
+  }
+  pthread_mutex_unlock(&g_atfork_list_mutex);
 }

@@ -108,6 +108,9 @@ unlock:
  * object owning 'dso'.
  * Note: if 'dso' is NULL, then all remaining handlers are called.
  */
+/* DSO-aware atfork registrations must not outlive unloaded code. */
+extern void __unregister_atfork(void* dso);
+
 void
 __cxa_finalize(void *dso)
 {
@@ -161,6 +164,10 @@ restart:
 		__atexit = NULL;
 	}
 	_ATEXIT_UNLOCK();
+	if (dso != NULL) {
+		__unregister_atfork(dso);
+	}
+
 }
 
 /*

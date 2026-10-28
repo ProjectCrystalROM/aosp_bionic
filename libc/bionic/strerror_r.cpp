@@ -62,6 +62,13 @@ int strerror_r(int error_number, char* buf, size_t buf_len) {
   return 0;
 }
 
+extern "C" char* __gnu_strerror_r(int error_number, char* buf, size_t buf_len) {
+  ErrnoRestorer errno_restorer; // The glibc strerror_r doesn't set errno if it truncates...
+  strerror_r(error_number, buf, buf_len);
+  return buf; // ...and just returns whatever fit.
+}
+
+
 extern "C" __LIBC_HIDDEN__ const char* __strsignal(int signal_number, char* buf, size_t buf_len) {
   const char* signal_name = __strsignal_lookup(signal_number);
   if (signal_name != NULL) {
